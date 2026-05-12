@@ -1,0 +1,21 @@
+# Outputs regenerables
+outputs/datasets/*.csv
+outputs/figures/*.png
+outputs/models/*.json
+
+# Notebooks ejecutados
+**/.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+
+# OS
+.DS_Store
