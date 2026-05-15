@@ -5,6 +5,15 @@ ML analysis (XGBoost + SHAP + MCMC) on likelihoods of axion-like particles
 rare meson decays (K⁺ → a π⁺, B⁺ → K⁺ a, …) and posterior exploration
 with `emcee`.
 
+## Index
+
+- [Physics](#physics)
+- [Notebook](https://github.com/AlejandroMirRamos/AlpsML/blob/main/notebooks/AlpsML.ipynb) ↗
+- [Repository structure](#repository-structure)
+- [Pipeline overview](#pipeline-overview)
+- [Setup](#setup)
+- [Notes](#notes)
+
 ## Physics
 
 **Axion-like particles (ALPs)** emerge from the spontaneous breaking of a
