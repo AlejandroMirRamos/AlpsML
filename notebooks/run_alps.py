@@ -100,7 +100,8 @@ FEATURES = ["log_fa", "pq_qL", "pq_lL", "pq_uR", "pq_dR", "pq_eR", "ma"]
 try:
     import alpaca.sectors as _alpaca_sectors
     _sector_all = _alpaca_sectors.default_sectors['all']
-    TRANSICIONES_TARGET = sorted(_sector_all.observables)
+    # sorted() necesita strings; convertir por si acaso los objetos no son str
+    TRANSICIONES_TARGET = sorted(str(o) for o in _sector_all.observables)
     print(f"[AlpsML] Cargados {len(TRANSICIONES_TARGET)} observables de alpaca.sectors")
 except Exception as _exc:
     warnings.warn(f"No se pudo cargar alpaca.sectors: {_exc}. "
@@ -109,6 +110,11 @@ except Exception as _exc:
         "K+ -> a pi+", "K0L -> a pi0",
         "B+ -> K+ a",  "B0 -> K0 a", "B+ -> a pi+",
     ]
+
+# Usar 'fork' explícitamente — necesario en Python 3.12+ y notebooks
+# donde el método por defecto es 'spawn'/'forkserver' y los workers
+# no pueden encontrar funciones definidas en __main__
+_MP_CTX = mp.get_context("fork")
 
 # ── Funciones de χ² (nivel de módulo — picklables por mp.Pool) ────────────────
 def obtener_chi2_uv(p):
@@ -404,7 +410,7 @@ def main():
         print(f"  Calculando {N_PUNTOS} puntos (7D) con {cores} cores...")
 
         dataset = []
-        with mp.Pool(processes=cores) as pool:
+        with _MP_CTX.Pool(processes=cores) as pool:
             for resultado in pool.imap_unordered(
                 procesar_punto_paralelo, tareas, chunksize=10
             ):
@@ -627,7 +633,7 @@ def main():
         cores = max(1, mp.cpu_count() - 1)
         print(f"  [TH]  Iniciando RWMH paralelo teórico ({cores} cores CPU)...")
         t0_th = time.perf_counter()
-        with mp.Pool(processes=cores) as pool:
+        with _MP_CTX.Pool(processes=cores) as pool:
             log_p_th = _theory_log_p_factory(pool)
             flat_samples_th, stopped_th, tau_th, ess_th = _parallel_mcmc_alps(
                 log_p_th, **MCMC_KWARGS,
@@ -664,7 +670,7 @@ def main():
 
     print(f"  Calculando observables físicos para {N_PHYS} muestras...")
     cores_phys = max(1, mp.cpu_count() - 1)
-    with mp.Pool(processes=cores_phys) as pool:
+    with _MP_CTX.Pool(processes=cores_phys) as pool:
         phys_rows = pool.map(compute_derived_single, [tuple(r) for r in subset])
 
     phys_arr = np.array(phys_rows, dtype=float)   # shape (N_PHYS, 7)
