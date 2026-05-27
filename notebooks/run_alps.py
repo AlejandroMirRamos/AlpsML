@@ -111,9 +111,12 @@ except Exception as _exc:
         "B+ -> K+ a",  "B0 -> K0 a", "B+ -> a pi+",
     ]
 
-# Usar 'fork' explícitamente — necesario en Python 3.12+ y notebooks
-# donde el método por defecto es 'spawn'/'forkserver' y los workers
-# no pueden encontrar funciones definidas en __main__
+# Forzar 'fork' — imprescindible en Python 3.12+ donde el default
+# es 'forkserver' y los workers no encuentran funciones de __main__
+try:
+    mp.set_start_method("fork", force=True)
+except RuntimeError:
+    pass
 _MP_CTX = mp.get_context("fork")
 
 # ── Funciones de χ² (nivel de módulo — picklables por mp.Pool) ────────────────
