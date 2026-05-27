@@ -11,6 +11,13 @@ Flags al inicio del archivo:
     FORCE_REGENERATE  — regenerar dataset aunque exista el CSV
     FORCE_RETRAIN     — reentrenar XGBoost aunque exista el modelo
     FORCE_MCMC        — re-correr MCMC aunque exista el posterior CSV
+
+Correcciones v2 (basadas en feedback del profesor):
+    - Se usan TODOS los sectores de alpaca (incluye B→Kμμ visible,
+      meson mixing, desintegraciones radiativas/leptónicas).
+    - Rango de cargas PQ restringido a [-1, 1].
+    - Masa del ALP como parámetro libre en [MA_MIN, MA_MAX] GeV.
+    - Gráfica adicional con observables físicos derivados.
 """
 
 # ── Backend no-interactivo ANTES de cualquier import de matplotlib ──
@@ -52,37 +59,71 @@ FIGURES_DIR  = PAPER_DIR / "figures"
 for _d in (DATASETS_DIR, MODELS_DIR, FIGURES_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
-DATASET_CSV    = DATASETS_DIR / "dataset_alps_uv.csv"
-DATASET_BACKUP = DATASETS_DIR / "backup_dataset_alps_uv.csv"
-MODEL_PATH     = MODELS_DIR   / "modelo_alps_uv.json"
-BEST_PARAMS    = MODELS_DIR   / "best_params_uv.json"
-POSTERIOR_CSV  = DATASETS_DIR / "posterior_samples_uv.csv"
-CORNER_PNG     = FIGURES_DIR  / "corner_plot_uv.png"
+DATASET_CSV    = DATASETS_DIR / "dataset_alps_uv_v2.csv"
+DATASET_BACKUP = DATASETS_DIR / "backup_dataset_alps_uv_v2.csv"
+MODEL_PATH     = MODELS_DIR   / "modelo_alps_uv_v2.json"
+BEST_PARAMS    = MODELS_DIR   / "best_params_uv_v2.json"
+POSTERIOR_CSV  = DATASETS_DIR / "posterior_samples_uv_v2.csv"
+POSTERIOR_CSV_THEORY = DATASETS_DIR / "posterior_samples_uv_v2_theory.csv"
+CORNER_PNG     = FIGURES_DIR  / "corner_plot_uv_v2.png"
+CORNER_PHYS_PNG = FIGURES_DIR / "corner_plot_uv_v2_phys.png"
 
 # ── Flags ──────────────────────────────────────────────────────────────────────
-FORCE_REGENERATE = False
-FORCE_RETRAIN    = False
-FORCE_MCMC       = False
+# NOTA: FORCE_REGENERATE=True es necesario la primera vez ya que cambió
+#       la dimensionalidad del dataset (nueva columna 'ma', nuevas transiciones).
+FORCE_REGENERATE = True
+FORCE_RETRAIN    = True
+FORCE_MCMC       = True
 
 # ── Configuración física ───────────────────────────────────────────────────────
 N_PUNTOS         = 50_000
 CUTOFF           = 10.0
 SIGMOID_WIDTH    = 0.4
-MA_FIXED         = 2.0
-L_BOUNDS_GEN     = [6.0, -10.0, -10.0, -10.0, -10.0, -10.0]
-U_BOUNDS_GEN     = [8.0,  10.0,  10.0,  10.0,  10.0,  10.0]
-TRANSICIONES_TARGET = [
-    "K+ -> a pi+", "K0L -> a pi0", "B+ -> K+ a", "B0 -> K0 a", "B+ -> a pi+"
-]
-FEATURES = ["log_fa", "pq_qL", "pq_lL", "pq_uR", "pq_dR", "pq_eR"]
+
+# Masa del ALP como parámetro libre [GeV]
+MA_MIN = 0.2
+MA_MAX = 4.5
+
+# Cargas PQ restringidas a [-1, 1] (más físicas que [-10, 10])
+PQ_MIN = -1.0
+PQ_MAX =  1.0
+
+# Límites para la generación: 7D (log_fa, pq_qL, pq_lL, pq_uR, pq_dR, pq_eR, ma)
+L_BOUNDS_GEN = [6.0, PQ_MIN, PQ_MIN, PQ_MIN, PQ_MIN, PQ_MIN, MA_MIN]
+U_BOUNDS_GEN = [8.0, PQ_MAX, PQ_MAX, PQ_MAX, PQ_MAX, PQ_MAX, MA_MAX]
+
+FEATURES = ["log_fa", "pq_qL", "pq_lL", "pq_uR", "pq_dR", "pq_eR", "ma"]
+
+# ── Transiciones: lista completa de observables de alpaca ─────────────────────
+# Incluye B→Kμμ (ALP visible), meson mixing, desintegraciones radiativas/leptónicas.
+# Se carga una vez y se comparte con los workers a través de la variable global.
+try:
+    import alpaca.sectors as _alpaca_sectors
+    _sector_all = _alpaca_sectors.default_sectors['all']
+    TRANSICIONES_TARGET = sorted(_sector_all.observables)
+    print(f"[AlpsML] Cargados {len(TRANSICIONES_TARGET)} observables de alpaca.sectors")
+except Exception as _exc:
+    warnings.warn(f"No se pudo cargar alpaca.sectors: {_exc}. "
+                  "Usando lista mínima de transiciones.")
+    TRANSICIONES_TARGET = [
+        "K+ -> a pi+", "K0L -> a pi0",
+        "B+ -> K+ a",  "B0 -> K0 a", "B+ -> a pi+",
+    ]
 
 # ── Funciones de χ² (nivel de módulo — picklables por mp.Pool) ────────────────
 def obtener_chi2_uv(p):
-    import alpaca
+    """Calcula el χ² global UV para un punto del espacio de parámetros.
+
+    Parameters
+    ----------
+    p : tuple de 7 floats
+        (log_fa, pq_qL, pq_lL, pq_uR, pq_dR, pq_eR, ma)
+    """
+    import alpaca  # noqa: F401
     from alpaca.uvmodels import PQChargedModel
     from alpaca.statistics import get_chi2, ChiSquaredList
 
-    logfa, pq_qL, pq_lL, pq_uR, pq_dR, pq_eR = p
+    logfa, pq_qL, pq_lL, pq_uR, pq_dR, pq_eR, ma = p
     fa = 10 ** logfa
     fa_scale = 4 * np.pi * fa
 
@@ -96,8 +137,14 @@ def obtener_chi2_uv(p):
             "eR": pq_eR,
         })
         c = uv_model.get_couplings({}, fa_scale)
+
+        # Usar la lista global precalculada (incluye B→Kμμ visible,
+        # meson mixing, radiativas, leptónicas, etc.)
         res_list = get_chi2(
-            transitions=TRANSICIONES_TARGET, ma=MA_FIXED, couplings=c, fa=fa
+            transitions=TRANSICIONES_TARGET,
+            ma=ma,
+            couplings=c,
+            fa=fa,
         )
         lista_formal = ChiSquaredList(res_list)
         chi2_comb = lista_formal.combine("GlobalUV", r"\text{Global UV}")
@@ -110,11 +157,78 @@ def procesar_punto_paralelo(args):
     try:
         chi_val = obtener_chi2_uv(p)
         return {
-            "ma": MA_FIXED, "log_fa": p[0], "pq_qL": p[1], "pq_lL": p[2],
-            "pq_uR": p[3], "pq_dR": p[4], "pq_eR": p[5], "chi2": chi_val,
+            "log_fa": p[0], "pq_qL": p[1], "pq_lL": p[2],
+            "pq_uR": p[3], "pq_dR": p[4], "pq_eR": p[5], "ma": p[6],
+            "chi2": chi_val,
         }
     except Exception as e:
         return {"error": f"Punto {i}: {e}"}
+
+
+# ── Observables físicos derivados (para corner plot tipo-profesor) ─────────────
+def compute_derived_single(row):
+    """Calcula observables físicos para un punto del espacio UV.
+
+    Devuelve: (log_fa, ma, 100*|c_Vsb|, |c_Amm|, |cG|, log10_ctau_m, log10_BR_BKa)
+    """
+    import warnings
+    import numpy as np
+    from alpaca.uvmodels import PQChargedModel
+    from alpaca.decays.alp_decays.branching_ratios import total_decay_width
+    from alpaca.decays.decays import branching_ratio
+    from alpaca.constants import hbarc_GeVnm
+
+    logfa, pq_qL, pq_lL, pq_uR, pq_dR, pq_eR, ma = row
+    fa = 10 ** logfa
+    fa_scale = 4 * np.pi * fa
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            uv_model = PQChargedModel("non-universal model", {
+                "qL": [0, 0, pq_qL],
+                "lL": [0, 0, pq_lL],
+                "uR": pq_uR,
+                "dR": pq_dR,
+                "eR": pq_eR,
+            })
+            c = uv_model.get_couplings({}, fa_scale)
+
+            # Correr al scale de la masa del ALP (base RL_below)
+            scale_run = max(float(ma), 2.0)  # no bajar de 2 GeV para estabilidad
+            clow = c.match_run(scale_run, 'RL_below')
+
+            # c_Vsb: acoplamiento vectorial FCNC b→s
+            # Índices 0-based: s=1 (2ª gen), b=2 (3ª gen)
+            c_Vsb = abs(complex(clow['cdL'][1, 2] + clow['cdR'][1, 2]))
+
+            # c_Amm: acoplamiento axial al muón (2ª generación, índice 1)
+            c_Amm = abs(complex(clow['ceR'][1, 1] - clow['ceL'][1, 1]))
+
+            # cG: acoplamiento al gluón (escalar)
+            cG = abs(float(clow['cG']))
+
+            # Anchura total de desintegración del ALP → tiempo de vida propio
+            dw_dict = total_decay_width(float(ma), c, fa)
+            dw_SM = float(dw_dict.get('DW_SM', 0.0))
+            if dw_SM < 1e-50:
+                ctau_m = np.inf
+            else:
+                # ctau en cm: 1e-7 * hbarc_GeVnm [GeV·nm] / dw [GeV]
+                # ctau en m: dividir por 100
+                ctau_cm = float(1e-7 * float(hbarc_GeVnm) / dw_SM)
+                ctau_m = ctau_cm / 100.0
+
+            log10_ctau_m = np.log10(ctau_m) if np.isfinite(ctau_m) and ctau_m > 0 else np.nan
+
+            # BR(B+ → K+ a)
+            br_BKa = float(branching_ratio('B+ -> K+ a', float(ma), c, fa))
+            log10_br = np.log10(max(br_BKa, 1e-20))
+
+            return (logfa, ma, 100.0 * c_Vsb, c_Amm, cG, log10_ctau_m, log10_br)
+
+        except Exception:
+            return (logfa, ma, np.nan, np.nan, np.nan, np.nan, np.nan)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -152,7 +266,7 @@ def _parallel_mcmc_alps(
     seed: int = 42,
     ess_target: int = 10_000,
     progress_every: int = 200,
-) -> tuple[np.ndarray, int, float, float]:
+) -> tuple:
     """n_chains cadenas RWMH independientes. log_p_fn(arr) -> log-prob array.
 
     Fases: diagonal adaptativa → covarianza empírica (Cholesky) tras burn_in.
@@ -272,8 +386,9 @@ def _theory_log_p_factory(pool: mp.Pool):
 # ──────────────────────────────────────────────────────────────────────────────
 def main():
     print("=" * 60)
-    print("AlpsML — GPU server run")
+    print("AlpsML v2 — GPU server run (cargas PQ ∈ [−1,1], masa libre)")
     print(f"  PAPER_DIR : {PAPER_DIR}")
+    print(f"  Transiciones: {len(TRANSICIONES_TARGET)} (full alpaca sectors)")
     print(f"  FORCE_REGENERATE={FORCE_REGENERATE}  FORCE_RETRAIN={FORCE_RETRAIN}  FORCE_MCMC={FORCE_MCMC}")
     print("=" * 60)
 
@@ -282,11 +397,11 @@ def main():
     if not FORCE_REGENERATE and DATASET_CSV.exists():
         print(f"  Usando caché: {DATASET_CSV} ({DATASET_CSV.stat().st_size/1e6:.1f} MB)")
     else:
-        sampler = qmc.LatinHypercube(d=6)
+        sampler = qmc.LatinHypercube(d=7)   # 7D: 6 cargas PQ + masa
         puntos  = qmc.scale(sampler.random(n=N_PUNTOS), L_BOUNDS_GEN, U_BOUNDS_GEN)
         tareas  = list(enumerate(puntos))
         cores   = max(1, mp.cpu_count() - 1)
-        print(f"  Calculando {N_PUNTOS} puntos con {cores} cores...")
+        print(f"  Calculando {N_PUNTOS} puntos (7D) con {cores} cores...")
 
         dataset = []
         with mp.Pool(processes=cores) as pool:
@@ -399,7 +514,7 @@ def main():
         ax.legend()
         ax.grid(True, which="both", ls="--", alpha=0.4)
         fig.tight_layout()
-        lc_path = FIGURES_DIR / "learning_curve_uv.png"
+        lc_path = FIGURES_DIR / "learning_curve_uv_v2.png"
         fig.savefig(lc_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"  Guardado: {lc_path}")
@@ -419,7 +534,7 @@ def main():
     fig, ax = plt.subplots(figsize=(10, 6))
     shap.plots.beeswarm(shap_values, show=False)
     plt.tight_layout()
-    bs_path = FIGURES_DIR / "shap_beeswarm_uv.png"
+    bs_path = FIGURES_DIR / "shap_beeswarm_uv_v2.png"
     plt.savefig(bs_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Guardado: {bs_path}")
@@ -428,7 +543,7 @@ def main():
     fig, ax = plt.subplots(figsize=(10, 6))
     shap.plots.bar(shap_values, show=False)
     plt.tight_layout()
-    bar_path = FIGURES_DIR / "shap_bar_uv.png"
+    bar_path = FIGURES_DIR / "shap_bar_uv_v2.png"
     plt.savefig(bar_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Guardado: {bar_path}")
@@ -436,7 +551,7 @@ def main():
     # Waterfall
     shap.plots.waterfall(shap_values[0], show=False)
     plt.tight_layout()
-    wf_path = FIGURES_DIR / "shap_waterfall_uv.png"
+    wf_path = FIGURES_DIR / "shap_waterfall_uv_v2.png"
     plt.savefig(wf_path, dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Guardado: {wf_path}")
@@ -445,15 +560,15 @@ def main():
     for col in FEATURES:
         shap.plots.scatter(shap_values[:, col], color=shap_values, show=False)
         plt.tight_layout()
-        sc_path = FIGURES_DIR / f"shap_scatter_{col}.png"
+        sc_path = FIGURES_DIR / f"shap_scatter_{col}_v2.png"
         plt.savefig(sc_path, dpi=150, bbox_inches="tight")
         plt.close()
     print(f"  Dependence plots guardados en {FIGURES_DIR}/")
 
     # ── §5. MCMC + corner plot ────────────────────────────────────────────────
     print("\n=== §5. MCMC + corner plot ===")
-    L_BOUNDS_MCMC = np.array([6.0, -5.0, -5.0, -5.0, -5.0, -5.0])
-    U_BOUNDS_MCMC = np.array([8.0,  5.0,  5.0,  5.0,  5.0,  5.0])
+    L_BOUNDS_MCMC = np.array([6.0, PQ_MIN, PQ_MIN, PQ_MIN, PQ_MIN, PQ_MIN, MA_MIN])
+    U_BOUNDS_MCMC = np.array([8.0, PQ_MAX, PQ_MAX, PQ_MAX, PQ_MAX, PQ_MAX, MA_MAX])
     MCMC_KWARGS   = dict(lows=L_BOUNDS_MCMC, highs=U_BOUNDS_MCMC,
                          n_chains=1024, n_steps=10_000, burn_in=500,
                          seed=42, ess_target=10_000)
@@ -461,7 +576,6 @@ def main():
     timing_ml = timing_th = None
 
     # ── §5a. ML MCMC (GPU) ───────────────────────────────────────────────────
-    POSTERIOR_CSV_THEORY = DATASETS_DIR / "posterior_samples_uv_theory.csv"
     ml_cached = not FORCE_MCMC and POSTERIOR_CSV.exists()
     if ml_cached:
         print(f"  [ML]  Usando caché: {POSTERIOR_CSV}")
@@ -487,18 +601,19 @@ def main():
                    "n_steps_actual": int(stopped_ml), "ess_final": round(ess_ml, 1),
                    "tau_max": round(tau_ml, 2), "n_samples": len(flat_samples)}
 
-    # Corner plot ML
+    # Corner plot ML — parámetros UV
     corner_kwargs = {
         "labels": FEATURES, "show_titles": True, "title_fmt": ".2f",
-        "quantiles": [0.16, 0.5, 0.84], "color": "royalblue", "smooth": 0.9,
+        "quantiles": [0.16, 0.5, 0.84], "color": "teal", "smooth": 0.9,
         "levels": (0.68, 0.95), "fill_contours": True, "plot_datapoints": False,
-        "label_kwargs": {"fontsize": 12}, "title_kwargs": {"fontsize": 12},
+        "label_kwargs": {"fontsize": 11}, "title_kwargs": {"fontsize": 11},
     }
     fig = corner.corner(flat_samples, **corner_kwargs)
-    plt.suptitle("Posterior Distribution — UV Model (ma = 2.0 GeV)", fontsize=16, y=1.02)
+    plt.suptitle("Posterior Distribution — UV Model (cargas PQ ∈ [−1,1], masa libre)",
+                 fontsize=14, y=1.02)
     fig.savefig(CORNER_PNG, dpi=300, bbox_inches="tight")
     plt.close(fig)
-    print(f"  [ML]  Corner plot guardado: {CORNER_PNG}")
+    print(f"  [ML]  Corner plot UV guardado: {CORNER_PNG}")
 
     # ── §5b. Theory MCMC (CPU paralela) ─────────────────────────────────────
     th_cached = not FORCE_MCMC and POSTERIOR_CSV_THEORY.exists()
@@ -528,20 +643,71 @@ def main():
                    "tau_max": round(tau_th, 2), "n_samples": len(flat_samples_th)}
 
     # Corner comparativo ML vs Theory
-    CORNER_CMP_PNG = FIGURES_DIR / "corner_plot_uv_compare.png"
-    fig_cmp = corner.corner(flat_samples, color="royalblue",
+    CORNER_CMP_PNG = FIGURES_DIR / "corner_plot_uv_v2_compare.png"
+    fig_cmp = corner.corner(flat_samples, color="teal",
                             labels=FEATURES, smooth=0.9,
                             levels=(0.68, 0.95), fill_contours=True,
                             plot_datapoints=False)
     corner.corner(flat_samples_th, color="tomato", fig=fig_cmp,
                   smooth=0.9, levels=(0.68, 0.95), fill_contours=True,
                   plot_datapoints=False)
-    plt.suptitle("Posterior UV Model — ML (blue) vs Theory (red)", fontsize=14, y=1.01)
+    plt.suptitle("Posterior UV Model — ML (teal) vs Theory (red)", fontsize=14, y=1.01)
     fig_cmp.savefig(CORNER_CMP_PNG, dpi=300, bbox_inches="tight")
     plt.close(fig_cmp)
     print(f"  Corner comparativo guardado: {CORNER_CMP_PNG}")
 
-    # ── §5c. Timings JSON + tabla ─────────────────────────────────────────────
+    # ── §5c. Corner plot de observables físicos ──────────────────────────────
+    print("\n=== §5c. Corner plot con observables físicos ===")
+    N_PHYS = min(2000, len(flat_samples))   # submuestreo para velocidad
+    idx_phys = np.random.default_rng(99).choice(len(flat_samples), N_PHYS, replace=False)
+    subset = flat_samples[idx_phys]
+
+    print(f"  Calculando observables físicos para {N_PHYS} muestras...")
+    cores_phys = max(1, mp.cpu_count() - 1)
+    with mp.Pool(processes=cores_phys) as pool:
+        phys_rows = pool.map(compute_derived_single, [tuple(r) for r in subset])
+
+    phys_arr = np.array(phys_rows, dtype=float)   # shape (N_PHYS, 7)
+
+    # Filtrar NaN
+    valid = np.all(np.isfinite(phys_arr), axis=1)
+    phys_valid = phys_arr[valid]
+    print(f"  Muestras válidas: {valid.sum()}/{N_PHYS}")
+
+    if valid.sum() > 50:
+        phys_labels = [
+            r"$\log_{10} f_a$ [GeV]",
+            r"$m_a$ [GeV]",
+            r"$100\times|c_{sb}^V|$",
+            r"$|c_{A\mu\mu}|$",
+            r"$|c_G|$",
+            r"$\log_{10}(c\tau)$ [m]",
+            r"$\log_{10}\mathrm{BR}(B^+\to K^+a)$",
+        ]
+        fig_phys = corner.corner(
+            phys_valid,
+            labels=phys_labels,
+            show_titles=True, title_fmt=".2f",
+            quantiles=[0.16, 0.5, 0.84],
+            color="teal", smooth=0.9,
+            levels=(0.68, 0.95), fill_contours=True, plot_datapoints=False,
+            label_kwargs={"fontsize": 10}, title_kwargs={"fontsize": 10},
+        )
+        plt.suptitle("Posterior — Observables físicos", fontsize=14, y=1.01)
+        fig_phys.savefig(CORNER_PHYS_PNG, dpi=300, bbox_inches="tight")
+        plt.close(fig_phys)
+        print(f"  Corner físico guardado: {CORNER_PHYS_PNG}")
+
+        # Guardar como CSV
+        phys_df = pd.DataFrame(phys_valid, columns=[
+            "log_fa", "ma", "c_Vsb_x100", "c_Amm", "cG",
+            "log10_ctau_m", "log10_BR_BKa"
+        ])
+        phys_df.to_csv(DATASETS_DIR / "posterior_phys_uv_v2.csv", index=False)
+    else:
+        print("  [!] Pocas muestras válidas — corner físico omitido.")
+
+    # ── §5d. Timings JSON + tabla ─────────────────────────────────────────────
     speedup = (
         th_meta["wall_s"] / ml_meta["wall_s"]
         if (ml_meta["wall_s"] and th_meta["wall_s"])
@@ -553,11 +719,11 @@ def main():
         "common": {"n_chains": 1024, "n_steps_cap": 10_000,
                    "burn_in": 500, "seed": 42, "ess_target": 10_000},
         "runs": {
-            "mcmc_uv": {"ml": ml_meta, "theory": th_meta,
-                        "speedup": round(speedup, 2) if speedup else None},
+            "mcmc_uv_v2": {"ml": ml_meta, "theory": th_meta,
+                           "speedup": round(speedup, 2) if speedup else None},
         },
     }
-    timings_path = PAPER_DIR / "timings.json"
+    timings_path = PAPER_DIR / "timings_v2.json"
     with open(timings_path, "w") as f:
         json.dump(timings, f, indent=2)
     print(f"\n  Timings guardados: {timings_path}")
@@ -572,7 +738,7 @@ def main():
     ess_ml_str = str(int(ml_meta["ess_final"])) if ml_meta["ess_final"] else "–"
     ess_th_str = str(int(th_meta["ess_final"])) if th_meta["ess_final"] else "–"
     sp_str = f"{speedup:.1f}×" if speedup else "–"
-    print(f"{'mcmc_uv':<14}{_fmt(ml_meta['wall_s']):>10}"
+    print(f"{'mcmc_uv_v2':<14}{_fmt(ml_meta['wall_s']):>10}"
           f"{_fmt(th_meta['wall_s']):>12}{sp_str:>10}  "
           f"{ess_ml_str}/{ess_th_str}")
     print("─" * 65)
