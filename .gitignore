@@ -1,5 +1,7 @@
-# Outputs regenerables (todo el arbol outputs/, incl. outputs/paper/...)
-outputs/
+# Outputs regenerables pesados: datasets (CSV) y modelos (JSON) NO se versionan.
+# Las figuras finales (PNG) SI se versionan, para poder verlas en GitHub.
+outputs/paper/datasets/
+outputs/paper/models/
 
 # Notebooks ejecutados
 **/.ipynb_checkpoints/
