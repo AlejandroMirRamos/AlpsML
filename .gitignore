@@ -1,7 +1,5 @@
-# Outputs regenerables
-outputs/datasets/*.csv
-outputs/figures/*.png
-outputs/models/*.json
+# Outputs regenerables (todo el arbol outputs/, incl. outputs/paper/...)
+outputs/
 
 # Notebooks ejecutados
 **/.ipynb_checkpoints/
