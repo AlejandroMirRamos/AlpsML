@@ -65,20 +65,23 @@ couplings = model.get_couplings({}, 4 * np.pi * fa)
 ```
 
 `get_couplings` propagates the five PQ charges through the anomaly equations
-and returns the full set of IR couplings used by `alpaca` to compute χ² over
-the five meson transitions (K⁺ → a π⁺, K⁰<sub>L</sub> → a π⁰,
-B⁺ → K⁺ a, B⁰ → K⁰ a, B⁺ → a π⁺).
+and returns the full set of IR couplings used by `alpaca` to compute the χ² over
+its **full observable sector** — the rare meson decays
+(K⁺ → a π⁺, K⁰<sub>L</sub> → a π⁰, B⁺ → K⁺ a, B⁰ → K⁰ a, B⁺ → a π⁺) together with
+visible channels (e.g. B → K μμ), meson mixing and radiative/leptonic decays.
 
-The scan is therefore over six physically meaningful UV parameters:
+The scan is therefore over seven physically meaningful parameters — the six UV
+inputs plus the ALP mass:
 
 | Parameter | Description | Range |
 |-----------|-------------|-------|
 | `log_fa`  | log₁₀ of the PQ scale f<sub>a</sub> (GeV) | [6, 8] |
-| `pq_qL`   | PQ charge of the 3rd-gen left-handed quark doublet | [−10, 10] |
-| `pq_lL`   | PQ charge of the 3rd-gen left-handed lepton doublet | [−10, 10] |
-| `pq_uR`   | PQ charge of right-handed up quarks | [−10, 10] |
-| `pq_dR`   | PQ charge of right-handed down quarks | [−10, 10] |
-| `pq_eR`   | PQ charge of right-handed charged leptons | [−10, 10] |
+| `pq_qL`   | PQ charge of the 3rd-gen left-handed quark doublet | [−1, 1] |
+| `pq_lL`   | PQ charge of the 3rd-gen left-handed lepton doublet | [−1, 1] |
+| `pq_uR`   | PQ charge of right-handed up quarks | [−1, 1] |
+| `pq_dR`   | PQ charge of right-handed down quarks | [−1, 1] |
+| `pq_eR`   | PQ charge of right-handed charged leptons | [−1, 1] |
+| `ma`      | ALP mass (GeV) | [1.5, 2.5] |
 
 ## Notebook
 
@@ -90,22 +93,23 @@ The scan is therefore over six physically meaningful UV parameters:
 AlpsML/
 ├── notebooks/
 │   └── AlpsML.ipynb       # full pipeline: dataset → XGBoost → SHAP → MCMC
-├── outputs/               # generated (gitignored)
-│   ├── datasets/          # dataset_alps_uv.csv, posterior_samples_uv.csv, …
-│   ├── figures/           # corner_plot_uv.png, SHAP*.png, CurvaAprendizaje.png
-│   └── models/            # modelo_alps_uv.json (XGBoost), best_params_uv.json
+├── outputs/paper/         # generated (gitignored)
+│   ├── datasets/          # dataset_alps_uv_v2.csv, posterior_samples_uv_v2.csv, …
+│   ├── figures/           # corner_plot_uv_v2*.png, SHAP*.png, learning_curve_uv_v2.png
+│   └── models/            # modelo_alps_{clf,reg}_v2.json (XGBoost), best_params_{clf,reg}_v2.json
 └── requirements.txt
 ```
 
 ## Pipeline overview
 
-- **(1) Dataset generation**: χ² sampled via Latin Hypercube over 6 dimensions —
-  `log f_a` and the Peccei–Quinn couplings `pq_qL, pq_lL, pq_uR, pq_dR, pq_eR` —
-  using `alpaca`.
-- **(2) XGBoost surrogate**: trained with Optuna hyperparameter search and
-  weighted samples.
+- **(1) Dataset generation**: χ² sampled via a 7-D Latin Hypercube —
+  `log_fa`, the five PQ charges `pq_qL, pq_lL, pq_uR, pq_dR, pq_eR`, and the ALP
+  mass `ma` — evaluated with `alpaca` over its full observable sector.
+- **(2) XGBoost surrogates**: two models tuned with Optuna — a classifier of the
+  allowed/excluded boundary and a regressor of the raw χ² in the allowed region.
 - **(3) SHAP interpretability**: feature importance and dependence plots.
-- **(4) MCMC**: posterior sampling with `emcee` over the surrogate χ².
+- **(4) MCMC**: posterior sampling with `emcee` — the χ² regressor provides the
+  likelihood and the classifier acts as a soft wall.
 
 All steps run as independent cells in `notebooks/AlpsML.ipynb`.
 `outputs/` is fully regenerable from the notebook and is gitignored.
