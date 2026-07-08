@@ -1,9 +1,11 @@
 # AlpsML
 
-ML analysis (XGBoost + SHAP + MCMC) on likelihoods of axion-like particles
-(ALPs) in non-universal UV models with `alpaca`. A χ² surrogate trained on
-rare meson decays (K⁺ → a π⁺, B⁺ → K⁺ a, …) and posterior exploration
-with `emcee`.
+ML analysis (XGBoost + SHAP + MCMC) of axion-like particle (ALP) likelihoods
+in non-universal UV models with `alpaca`, targeting the ~2 GeV ALP explanation
+of the Belle II B⁺ → K⁺νν̄ excess. A χ² surrogate is trained over the full
+`alpaca` observable sector (FCNC meson decays K⁺ → a π⁺, B⁺ → K⁺ a, …, plus
+visible channels, meson mixing and leptonic/radiative decays), and the
+posterior is explored with `emcee`.
 
 **[→ Open notebook: notebooks/AlpsML.ipynb](https://github.com/AlejandroMirRamos/AlpsML/blob/main/notebooks/AlpsML.ipynb)**
 
@@ -13,6 +15,7 @@ with `emcee`.
 - [Notebook](https://github.com/AlejandroMirRamos/AlpsML/blob/main/notebooks/AlpsML.ipynb) ↗
 - [Repository structure](#repository-structure)
 - [Pipeline overview](#pipeline-overview)
+- [Performance](#performance)
 - [Setup](#setup)
 - [Notes](#notes)
 
@@ -75,13 +78,19 @@ inputs plus the ALP mass:
 
 | Parameter | Description | Range |
 |-----------|-------------|-------|
-| `log_fa`  | log₁₀ of the PQ scale f<sub>a</sub> (GeV) | [6, 8] |
+| `log_fa`  | log₁₀ of the PQ scale f<sub>a</sub> (GeV) | [6, 7.5] |
 | `pq_qL`   | PQ charge of the 3rd-gen left-handed quark doublet | [−1, 1] |
 | `pq_lL`   | PQ charge of the 3rd-gen left-handed lepton doublet | [−1, 1] |
 | `pq_uR`   | PQ charge of right-handed up quarks | [−1, 1] |
 | `pq_dR`   | PQ charge of right-handed down quarks | [−1, 1] |
 | `pq_eR`   | PQ charge of right-handed charged leptons | [−1, 1] |
-| `ma`      | ALP mass (GeV) | [1.5, 2.5] |
+| `ma`      | ALP mass (GeV) | [1.7, 2.2] |
+
+The `ma` window brackets the ~2 GeV particle preferred by the Belle II
+B⁺ → K⁺νν̄ excess. In the MCMC the flat box priors are supplemented by an
+informative Gaussian prior on `log_fa`, N(6.8, 0.4), matching the reference
+ALP analysis; the generation range of `log_fa` is capped at 7.5 so it
+coincides with the MCMC prior box.
 
 ## Notebook
 
@@ -102,17 +111,43 @@ AlpsML/
 
 ## Pipeline overview
 
-- **(1) Dataset generation**: χ² sampled via a 7-D Latin Hypercube —
-  `log_fa`, the five PQ charges `pq_qL, pq_lL, pq_uR, pq_dR, pq_eR`, and the ALP
-  mass `ma` — evaluated with `alpaca` over its full observable sector.
-- **(2) XGBoost surrogates**: two models tuned with Optuna — a classifier of the
-  allowed/excluded boundary and a regressor of the raw χ² in the allowed region.
-- **(3) SHAP interpretability**: feature importance and dependence plots.
-- **(4) MCMC**: posterior sampling with `emcee` — the χ² regressor provides the
-  likelihood and the classifier acts as a soft wall.
+- **(1) Dataset generation**: 8 000 χ² evaluations sampled via a 7-D Latin
+  Hypercube (`log_fa`, the five PQ charges `pq_qL, pq_lL, pq_uR, pq_dR, pq_eR`,
+  and the ALP mass `ma`), computed with `alpaca` over its full observable sector
+  and parallelized across cores. The training target is a sigmoid of the Δχ²
+  relative to the dataset minimum, with the allowed/excluded boundary at
+  Δχ² ≈ 10.
+- **(2) XGBoost surrogates (two-stage strategy)**: two models tuned with Optuna,
+  with distinct roles. The **classifier** (CLF) learns the sigmoid target over
+  the whole space and defines the allowed/excluded boundary; the **regressor**
+  (REG) learns the raw χ² only inside the allowed region, where the physically
+  relevant structure lives.
+- **(3) SHAP interpretability**: feature importance and dependence plots on the
+  classifier, ranking which PQ charges (and `ma`) control the phenomenology.
+- **(4) MCMC (two-surrogate posterior)**: sampling with `emcee` of
+  log p = −½·χ²(REG) + log-prior − softplus wall(CLF). The likelihood comes from
+  the raw-χ² regressor; the classifier only keeps the walkers out of the region
+  where the regressor would extrapolate. A corner plot of derived physical
+  observables (|c_V^sb|, |c_A^μμ|, |c_G|, cτ, BR(B⁺ → K⁺a)) is computed with
+  `alpaca` on a posterior subsample.
 
 All steps run as independent cells in `notebooks/AlpsML.ipynb`.
 `outputs/` is fully regenerable from the notebook and is gitignored.
+
+## Performance
+
+Reference figures from the paper (single CPU core, cold caches):
+
+| | XGBoost surrogate | Exact `alpaca` | Speed-up |
+|---|---|---|---|
+| Per evaluation | ≈ 3.5 µs | ≈ 1.85 s | ≈ 5×10⁵ |
+| 8 000-point training set | ≈ 0.03 s | ≈ 4 core-h | ≈ 5×10⁵ |
+
+The notebook includes a benchmark cell that reproduces this measurement; the
+exact branch runs in a cold subprocess so `alpaca`'s internal caches cannot
+distort the timing. The posterior favours m<sub>a</sub> ≈ 1.8 GeV and
+f<sub>a</sub> in the 10⁶–10⁷ GeV range, in agreement with previous analyses of
+the Belle II excess.
 
 ## Setup
 
