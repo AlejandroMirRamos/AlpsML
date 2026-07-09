@@ -136,7 +136,7 @@ All steps run as independent cells in `notebooks/AlpsML.ipynb`.
 
 ## Performance
 
-Reference figures from the paper (single CPU core, cold caches):
+Reference figures from this repo's benchmark (single CPU core, cold caches):
 
 | | XGBoost surrogate | Exact `alpaca` | Speed-up |
 |---|---|---|---|
