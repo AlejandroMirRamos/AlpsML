@@ -7,6 +7,8 @@ of the Belle II B⁺ → K⁺νν̄ excess. A χ² surrogate is trained over the
 visible channels, meson mixing and leptonic/radiative decays), and the
 posterior is explored with `emcee`.
 
+**Paper:** J. Alda, J. Asorey, A. Mir, S. Peñaranda, *Physically Consistent Parameter Inference: Transparent Machine-Learning Emulation in High Energy Physics and Cosmology*, [Universe **12** (2026) 238](https://doi.org/10.3390/universe12080238) · [arXiv:2607.12726](https://arxiv.org/abs/2607.12726) (Section 3.2, axion-like particles)
+
 **[→ Open notebook: notebooks/AlpsML.ipynb](https://github.com/AlejandroMirRamos/AlpsML/blob/main/notebooks/AlpsML.ipynb)**
 
 ## Index
